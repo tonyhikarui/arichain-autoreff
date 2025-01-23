@@ -25,7 +25,7 @@ class EmailGenerator {
 
 function generateRandomPassword(length = 12) {
   const charset =
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?";
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#%^&()_+-=[]{}|,.<>";
   let password = "";
 
   for (let i = 0; i < length; i++) {

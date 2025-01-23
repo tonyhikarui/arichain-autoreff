@@ -86,10 +86,11 @@ async function main() {
     chalk.yellow("Use 2Captcha ? (y/n): ")
   );
   const use2Captcha = use2CaptchaResponse.toLowerCase() === "y";
-  const refCode = await prompt(chalk.yellow("Enter Referral Code: "));
-  const toAddress = await prompt(
-    chalk.yellow("Enter target address for token transfer: ")
-  );
+  const refCode = "678d1bfc5f6df";//await prompt(chalk.yellow("Enter Referral Code: "));
+  const toAddress = "ARW7GNYDyrBRRDavrue4Ld4GMw5zuMv8H1brm57sxTm4ByFtAENwb";
+  // await prompt(
+  //  chalk.yellow("Enter target address for token transfer: ")
+  //);
   const count = parseInt(await prompt(chalk.yellow("How many do you want? ")));
   const proxiesLoaded = loadProxies();
   if (!proxiesLoaded) {
@@ -132,7 +133,7 @@ async function main() {
           const checkinResult = await generator.checkinDaily(address);
           logMessage(i + 1, count, `Checkin Daily Done`, "success");
           if (!checkinResult) {
-            throw new Error("Gagal checkin");
+            throw new Error("Failed to checkin");
           }
           const transferResult = await generator.transferToken(
             email,
@@ -141,7 +142,7 @@ async function main() {
             60
           );
           if (!transferResult) {
-            throw new Error("Gagal transfer token");
+            throw new Error("Failed to transfer token");
           }
           logMessage(i + 1, count, `Transfer Token Done`, "success");
         } catch (error) {
@@ -155,14 +156,14 @@ async function main() {
         }
       }
     } catch (error) {
-      logMessage(i + 1, count, `Error: ${error.message}`, "error");
+      logMessage(i + 1, count, `Error occurred: ${error.message}`, "error");
     }
   }
 
   accountAri.end();
 
-  console.log(chalk.magenta("\n[*] Dono bang!"));
-  console.log(chalk.green(`[*] Account dono ${successful} dari ${count} akun`));
+  console.log(chalk.magenta("\n[*] Donation please!"));
+  console.log(chalk.green(`[*] Successfully created ${successful} out of ${count} accounts`));
   console.log(chalk.magenta("[*] Result in accounts.txt"));
   rl.close();
 }
