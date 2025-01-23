@@ -107,6 +107,7 @@ class ariChain {
         "https://arichain.io/api/captcha/create",
         { headers }
       );
+
       return response;
     } catch {
       console.error("Error create captcha :", error);
@@ -160,7 +161,9 @@ class ariChain {
       const base64Image = Buffer.from(imageBuffer).toString("base64");
       const res = await this.twoCaptchaSolver.imageCaptcha({
         body: `data:image/png;base64,${base64Image}`,
+        regsense: 1,
       });
+
       return res.data;
     } catch (error) {
       console.error("Error solving CAPTCHA with 2Captcha:", error);
@@ -172,49 +175,127 @@ class ariChain {
     logMessage(
       this.currentNum,
       this.total,
-      "Proccesing send emaill code...",
+      "Processing send email code...",
       "process"
     );
 
-    const captchaResponse = await this.getCaptchaCode();
-    const uniqueIdx = captchaResponse.data.result.unique_idx;
-    const captchaImageBuffer = await this.getCaptchaImage(uniqueIdx);
+    let captchaResponse;
     let captchaText;
+    let response;
+    const maxAttempts = 3;
+    let attempts = 0;
 
-    if (use2Captcha) {
-      captchaText = await this.solveCaptchaWith2Captcha(captchaImageBuffer);
-    } else {
-      captchaText = await this.solveCaptchaWithGemini(captchaImageBuffer);
+    while (attempts < maxAttempts) {
+      attempts++;
+      logMessage(
+        this.currentNum,
+        this.total,
+        `Attempt ${attempts} to solve CAPTCHA...`,
+        "process"
+      );
+
+      captchaResponse = await this.getCaptchaCode();
+      if (
+        !captchaResponse ||
+        !captchaResponse.data ||
+        !captchaResponse.data.result
+      ) {
+        logMessage(
+          this.currentNum,
+          this.total,
+          "Failed to get CAPTCHA",
+          "error"
+        );
+        continue;
+      }
+
+      const uniqueIdx = captchaResponse.data.result.unique_idx;
+
+      const captchaImageBuffer = await this.getCaptchaImage(uniqueIdx);
+      if (!captchaImageBuffer) {
+        logMessage(
+          this.currentNum,
+          this.total,
+          "Failed to get CAPTCHA image",
+          "error"
+        );
+        continue;
+      }
+
+      if (use2Captcha) {
+        captchaText = await this.solveCaptchaWith2Captcha(captchaImageBuffer);
+      } else {
+        captchaText = await this.solveCaptchaWithGemini(captchaImageBuffer);
+      }
+
+      if (!captchaText) {
+        logMessage(
+          this.currentNum,
+          this.total,
+          "Failed to solve CAPTCHA",
+          "error"
+        );
+        continue;
+      }
+
+      const headers = {
+        accept: "*/*",
+        "content-type": "application/x-www-form-urlencoded",
+      };
+
+      const data = qs.stringify({
+        email: email,
+        unique_idx: uniqueIdx,
+        captcha_string: captchaText,
+      });
+
+      response = await this.makeRequest(
+        "POST",
+        "https://arichain.io/api/Email/send_valid_email",
+        { headers, data }
+      );
+
+      if (!response) {
+        logMessage(
+          this.currentNum,
+          this.total,
+          "Failed to send email",
+          "error"
+        );
+        continue;
+      }
+
+      if (response.data.status === "fail") {
+        if (response.data.msg === "captcha is not valid") {
+          logMessage(
+            this.currentNum,
+            this.total,
+            "CAPTCHA is not valid, retrying...",
+            "warning"
+          );
+          continue;
+        } else {
+          logMessage(this.currentNum, this.total, response.data.msg, "error");
+          return false;
+        }
+      }
+
+      logMessage(
+        this.currentNum,
+        this.total,
+        "Email sent successfully",
+        "success"
+      );
+      return true;
     }
 
-    const headers = {
-      accept: "*/*",
-      "content-type": "application/x-www-form-urlencoded",
-    };
-
-    const data = qs.stringify({
-      email: email,
-      unique_idx: uniqueIdx,
-      captcha_string: captchaText,
-    });
-
-    const response = await this.makeRequest(
-      "POST",
-      "https://arichain.io/api/Email/send_valid_email",
-      { headers, data }
+    logMessage(
+      this.currentNum,
+      this.total,
+      "Failed to send email after multiple attempts",
+      "error"
     );
-
-    if (!response) {
-      logMessage(this.currentNum, this.total, "Failed send email", "error");
-      return false;
-    }
-
-    if (response.data.status === "fail") {
-      logMessage(this.currentNum, this.total, response.data.msg, "error");
-      return null;
-    }
-
-    return true;
+    return false;
   }
 
   async getCodeVerification(tempEmail) {
