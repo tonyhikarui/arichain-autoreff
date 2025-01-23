@@ -1,3 +1,7 @@
+
+1$/GB for cheap proxies sell, [here](https://t.me/cheapproxie).
+
+
 # Ari Chain Wallet Auto Referral Bot
 
 This bot automates the process of creating accounts and using referral codes for the AriChain Wallet.
