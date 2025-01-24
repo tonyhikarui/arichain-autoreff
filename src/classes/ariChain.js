@@ -6,6 +6,7 @@ const { getProxyAgent } = require("./proxy");
 const fs = require("fs");
 const { EmailGenerator } = require("../utils/generator");
 const path = require("path");
+const Imap = require('imap');  // Add this line
 const TOKEN_PATH = path.join(__dirname, "../json/token.json");
 const confEmail = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, "../json/client_secret.json"))
@@ -55,6 +56,7 @@ class ariChain {
       model: "gemini-1.5-flash",
     });
     this.twoCaptchaSolver = new Solver(captchaApi);
+    this.imap = Imap;  // Add this line to make Imap available in class methods
   }
 
   async makeRequest(method, url, config = {}) {
@@ -298,80 +300,166 @@ class ariChain {
     return false;
   }
 
-  async getCodeVerification(tempEmail) {
-    logMessage(
-      this.currentNum,
-      this.total,
-      "Waiting for code verification...",
-      "process"
-    );
-
-    const maxAttempts = 5;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      logMessage(
-        this.currentNum,
-        this.total,
-        `Attempt ${attempt + 1}`,
-        "process"
-      );
-
-      logMessage(
-        this.currentNum,
-        this.total,
-        "Waiting for 10sec...",
-        "warning"
-      );
-      await new Promise((resolve) => setTimeout(resolve, 10000));
-
-      const messages = await this.gmailClient.users.messages.list({
-        userId: "me",
-        q: `to:${tempEmail}`,
+  async getCodeFromYahooMail(email, password) {
+    return new Promise((resolve, reject) => {
+      const imap = new this.imap({  // Use this.imap instead of Imap
+        user: email,
+        password: password,
+        host: 'imap.mail.yahoo.com',
+        port: 993,
+        tls: true,
+        tlsOptions: { rejectUnauthorized: false }
       });
 
-      if (messages.data.messages && messages.data.messages.length > 0) {
-        const messageId = messages.data.messages[0].id;
-        const message = await this.gmailClient.users.messages.get({
-          userId: "me",
-          id: messageId,
-          format: "full",
+      logMessage(this.currentNum, this.total, `Connecting to Yahoo Mail: ${email}`, "process");
+
+      imap.once('ready', () => {
+        logMessage(this.currentNum, this.total, "Connected to Yahoo Mail", "success");
+        
+        imap.openBox('INBOX', false, (err, box) => {
+          if (err) {
+            logMessage(this.currentNum, this.total, `Error opening inbox: ${err.message}`, "error");
+            imap.end();
+            reject(err);
+            return;
+          }
+
+          logMessage(this.currentNum, this.total, "Searching for verification email", "process");
+          // Search for recent emails with exact subject - increase time window to 15 minutes
+          const searchCriteria = [
+            ['SINCE', new Date(Date.now() - 1000 * 60 * 15)],
+            ['SUBJECT', 'ARI E-mail validation code']
+          ];
+
+          imap.search(searchCriteria, (err, results) => {
+            if (err) {
+              logMessage(this.currentNum, this.total, `Search error: ${err.message}`, "error");
+              imap.end();
+              resolve(null);
+              return;
+            }
+
+            if (!results.length) {
+              logMessage(this.currentNum, this.total, "No matching emails found", "warning");
+              imap.end();
+              resolve(null);
+              return;
+            }
+
+            logMessage(this.currentNum, this.total, `Found ${results.length} matching emails`, "success");
+
+            const f = imap.fetch(results, { bodies: '' });
+            let verification_code = null;
+
+            f.on('message', (msg) => {
+              msg.on('body', (stream) => {
+                let buffer = '';
+                stream.on('data', (chunk) => buffer += chunk.toString('utf8'));
+                stream.once('end', () => {
+                  logMessage(this.currentNum, this.total, "Processing email content", "process");
+                  
+                  // Try to find the code in the specific HTML structure first
+                  const htmlMatch = buffer.match(/<b[^>]*>(\d{6})<\/b>/);
+                  if (htmlMatch && htmlMatch[1] && !verification_code) { // Only set if not already found
+                    verification_code = htmlMatch[1];
+                    logMessage(this.currentNum, this.total, `Found first verification code in HTML: ${verification_code}`, "success");
+                  }
+                });
+              });
+            });
+
+            f.once('end', () => {
+              imap.end();
+              if (verification_code) {
+                logMessage(this.currentNum, this.total, `Using first verification code found: ${verification_code}`, "success");
+              }
+              resolve(verification_code);
+            });
+          });
         });
+      });
 
-        const emailBody = message.data.payload.body.data;
-        if (emailBody) {
-          const decodedBody = Buffer.from(emailBody, "base64").toString(
-            "utf-8"
-          );
+      imap.once('error', (err) => {
+        logMessage(this.currentNum, this.total, `IMAP error: ${err.message}`, "error");
+        imap.end();
+        reject(err);
+      });
 
-          const codeMatch = decodedBody.match(/\b\d{6}\b/);
-          if (codeMatch) {
-            const verificationCode = codeMatch[0];
-            logMessage(
-              this.currentNum,
-              this.total,
-              `Verificatin code found: ${verificationCode}`,
-              "success"
-            );
-            return verificationCode;
+      imap.connect();
+    });
+  }
+
+  async getCodeVerification(email, password) {
+    logMessage(this.currentNum, this.total, "Waiting for code verification...", "process");
+
+    const maxAttempts = 8; // Increased from 5 to 8 attempts
+    const waitTime = 15000; // Increased from 10 to 15 seconds
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      logMessage(this.currentNum, this.total, `Attempt ${attempt + 1}/${maxAttempts}`, "process");
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+
+      try {
+        let verificationCode = null;
+
+        if (email.includes('@yahoo.com')) {
+          logMessage(this.currentNum, this.total, "Using Yahoo Mail verification method", "process");
+          verificationCode = await this.getCodeFromYahooMail(email, password);
+        } else {
+          logMessage(this.currentNum, this.total, "Using Gmail verification method", "process");
+          const messages = await this.gmailClient.users.messages.list({
+            userId: 'me',
+            q: `to:${email}`,
+          });
+          
+          if (messages.data.messages && messages.data.messages.length > 0) {
+            const message = await this.gmailClient.users.messages.get({
+              userId: 'me',
+              id: messages.data.messages[0].id,
+            });
+
+            const emailBody = Buffer.from(message.data.payload.body.data, 'base64').toString('utf8');
+            const codeMatch = emailBody.match(/\b\d{6}\b/);
+            if (codeMatch) {
+              verificationCode = codeMatch[0];
+            }
           }
         }
+
+        if (verificationCode) {
+          logMessage(this.currentNum, this.total, `Verification code found: ${verificationCode}`, "success");
+          return verificationCode;
+        }
+      } catch (error) {
+        logMessage(this.currentNum, this.total, `Error checking email: ${error.message}`, "error");
       }
 
       logMessage(
-        this.currentNum,
-        this.total,
-        "Verification code not found. Waiting for 5 sec...",
+        this.currentNum, 
+        this.total, 
+        `Verification code not found. Waiting ${waitTime/1000} seconds before next attempt...`, 
         "warning"
       );
-      await new Promise((resolve) => setTimeout(resolve, 5000));
     }
 
-    logMessage(
-      this.currentNum,
-      this.total,
-      "Error get code verification.",
-      "error"
-    );
+    logMessage(this.currentNum, this.total, "Failed to get verification code after all attempts", "error");
     return null;
+  }
+
+  loadEmailAccounts(filePath) {
+    try {
+      const content = fs.readFileSync(path.resolve(__dirname, filePath), 'utf8');
+      return content.split('\n')
+        .map(line => line.trim())
+        .filter(line => line)
+        .map(line => {
+          const [email, password] = line.split(':');
+          return { email: email.trim(), password: password.trim() };
+        });
+    } catch (error) {
+      console.error('Error reading email accounts:', error.message);
+      return [];
+    }
   }
 
   async checkinDaily(address) {
@@ -424,7 +512,7 @@ class ariChain {
   async registerAccount(email, password) {
     logMessage(this.currentNum, this.total, "Register account...", "process");
 
-    const verifyCode = await this.getCodeVerification(email);
+    const verifyCode = await this.getCodeVerification(email,password);
     if (!verifyCode) {
       logMessage(
         this.currentNum,

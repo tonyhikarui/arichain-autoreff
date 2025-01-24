@@ -119,8 +119,10 @@ async function main() {
       if (account) {
         accountAri.write(`Email: ${email}\n`);
         accountAri.write(`Password: ${password}\n`);
-        accountAri.write(`Reff To: ${refCode}\n`);
-        accountAri.write("-".repeat(85) + "\n");
+        //accountAri.write(`Reff To: ${refCode}\n`);
+        accountAri.write(`Address: ${account.result.address}\n`);
+        accountAri.write(`Private Key: ${account.result.master_key}\n`);
+
 
         successful++;
         logMessage(i + 1, count, "Account Success Create!", "success");
@@ -129,6 +131,7 @@ async function main() {
         logMessage(i + 1, count, `Reff To : ${refCode}`, "success");
 
         const address = account.result.address;
+
         try {
           const checkinResult = await generator.checkinDaily(address);
           logMessage(i + 1, count, `Checkin Daily Done`, "success");
