@@ -109,7 +109,8 @@ async function main() {
     const yahooAccount = yahooAccounts[accountIndex];
     // Get proxy with same index as Yahoo account
     const currentProxy = await getProxyByIndex(accountIndex);
-    const generator = new ariChain(refCode, currentProxy);
+    // Pass current index and total count to constructor
+    const generator = new ariChain(refCode, currentProxy, i + 1, count);
 
     try {
       // Use Yahoo mail for verification

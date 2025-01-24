@@ -39,9 +39,11 @@ function loadOAuth2Client() {
 }
 
 class ariChain {
-  constructor(refCode, proxy = null) {
+  constructor(refCode, proxy = null, currentNum = 0, total = 0) {  // Add currentNum and total parameters
     this.refCode = refCode;
     this.proxy = proxy;
+    this.currentNum = currentNum;  // Initialize currentNum
+    this.total = total;  // Initialize total
     this.axiosConfig = {
       ...(this.proxy && { httpsAgent: getProxyAgent(this.proxy) }),
       timeout: 60000,
@@ -389,10 +391,130 @@ class ariChain {
     });
   }
 
+  async getCodeFromZohoMail(email, password) {
+    return new Promise((resolve, reject) => {
+      const imap = new this.imap({
+        user: email,
+        password: password,
+        host: 'imap.zoho.com',
+        port: 993,
+        tls: true,
+        tlsOptions: { rejectUnauthorized: false }
+      });
+
+      logMessage(this.currentNum, this.total, `Connecting to Zoho Mail: ${email}`, "process");
+
+      imap.once('ready', () => {
+        logMessage(this.currentNum, this.total, "Connected to Zoho Mail", "success");
+        
+        // List all mailboxes for debugging
+        imap.getBoxes((err, boxes) => {
+          if (err) {
+            logMessage(this.currentNum, this.total, `Error getting mailboxes: ${err.message}`, "error");
+          } else {
+            logMessage(this.currentNum, this.total, `Available mailboxes: ${Object.keys(boxes).join(', ')}`, "debug");
+          }
+        });
+        
+        imap.openBox('INBOX', false, (err, box) => {
+          if (err) {
+            logMessage(this.currentNum, this.total, `Error opening inbox: ${err.message}`, "error");
+            imap.end();
+            reject(err);
+            return;
+          }
+
+          logMessage(this.currentNum, this.total, `Mailbox status: ${JSON.stringify(box.flags)}`, "debug");
+          logMessage(this.currentNum, this.total, `Total messages: ${box.messages.total}`, "debug");
+          logMessage(this.currentNum, this.total, `New messages: ${box.messages.new}`, "debug");
+          logMessage(this.currentNum, this.total, `Unread messages: ${box.messages.unseen}`, "debug");
+
+          const subject = "ARI E-mail validation code";
+          const sender = "no-reply@arichain.com";
+          logMessage(this.currentNum, this.total, `Searching for subject: ${subject} or sender: ${sender}`, "debug");
+
+          // Try subject first
+          let searchCriteria = [
+            'UNSEEN',
+            ['SUBJECT', subject]
+          ];
+
+          const searchWithCriteria = async (criteria) => {
+            return new Promise((resolveSearch) => {
+              imap.search(criteria, (err, results) => {
+                if (err || !results.length) {
+                  resolveSearch(null);
+                  return;
+                }
+                resolveSearch(results);
+              });
+            });
+          };
+
+          // First try subject search, then fall back to sender search
+          searchWithCriteria(searchCriteria).then(async (results) => {
+            if (!results) {
+              logMessage(this.currentNum, this.total, "No results with subject search, trying sender...", "debug");
+              // Try searching by sender instead
+              searchCriteria = [
+                'UNSEEN',
+                ['FROM', sender]
+              ];
+              results = await searchWithCriteria(searchCriteria);
+            }
+
+            if (!results) {
+              logMessage(this.currentNum, this.total, "No matching emails found with either criteria", "warning");
+              imap.end();
+              resolve(null);
+              return;
+            }
+
+            logMessage(this.currentNum, this.total, `Found ${results.length} matching emails`, "success");
+
+            const f = imap.fetch(results, { bodies: '' });
+            let verification_code = null;
+
+            f.on('message', (msg) => {
+              msg.on('body', (stream) => {
+                let buffer = '';
+                stream.on('data', (chunk) => buffer += chunk.toString('utf8'));
+                stream.once('end', () => {
+                  logMessage(this.currentNum, this.total, "Processing email content", "process");
+                  
+                  // Try to find the code in the specific HTML structure first
+                  const htmlMatch = buffer.match(/<b[^>]*>(\d{6})<\/b>/);
+                  if (htmlMatch && htmlMatch[1] && !verification_code) { // Only set if not already found
+                    verification_code = htmlMatch[1];
+                    logMessage(this.currentNum, this.total, `Found first verification code in HTML: ${verification_code}`, "success");
+                  }
+                });
+              });
+            });
+
+            f.once('end', () => {
+              imap.end();
+              resolve(verification_code);
+            });
+          });
+        });
+      });
+
+      imap.once('error', (err) => {
+        logMessage(this.currentNum, this.total, `Zoho IMAP error: ${err.message}`, "error");
+        logMessage(this.currentNum, this.total, `Error stack: ${err.stack}`, "debug");
+        imap.end();
+        reject(err);
+      });
+
+      imap.connect();
+    });
+  }
+
   async getCodeVerification(email, password) {
     logMessage(this.currentNum, this.total, "Waiting for code verification...", "process");
 
-    const maxAttempts = 8; // Increased from 5 to 8 attempts
+    const maxAttempts = 20; // Increased from 5 to 8 attempts
     const waitTime = 15000; // Increased from 10 to 15 seconds
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -405,7 +527,12 @@ class ariChain {
         if (email.includes('@yahoo.com')) {
           logMessage(this.currentNum, this.total, "Using Yahoo Mail verification method", "process");
           verificationCode = await this.getCodeFromYahooMail(email, password);
-        } else {
+        } 
+        else if (email.includes('@zohomail.com')) {
+          logMessage(this.currentNum, this.total, "Using Zoho Mail verification method", "process");
+          verificationCode = await this.getCodeFromZohoMail(email, password);
+        }
+        else {
           logMessage(this.currentNum, this.total, "Using Gmail verification method", "process");
           const messages = await this.gmailClient.users.messages.list({
             userId: 'me',
