@@ -23,7 +23,7 @@ def save_unused_accounts(unused_emails):
         with open('config/register.txt', 'r') as f:
             accounts = {line.split(':')[0].strip(): line.strip() for line in f if ':' in line}
             
-        with open('config/unused_accounts.txt', 'w') as f:
+        with open('config/unused_accounts.txt', 'a') as f:
             for email in unused_emails:
                 if email in accounts:
                     f.write(f"{accounts[email]}\n")

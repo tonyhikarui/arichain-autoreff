@@ -304,7 +304,7 @@ class ariChain {
 
   async getCodeFromYahooMail(email, password) {
     return new Promise((resolve, reject) => {
-      const imap = new this.imap({  // Use this.imap instead of Imap
+      const imap = new this.imap({
         user: email,
         password: password,
         host: 'imap.mail.yahoo.com',
@@ -315,70 +315,66 @@ class ariChain {
 
       logMessage(this.currentNum, this.total, `Connecting to Yahoo Mail: ${email}`, "process");
 
-      imap.once('ready', () => {
-        logMessage(this.currentNum, this.total, "Connected to Yahoo Mail", "success");
-        
-        imap.openBox('INBOX', false, (err, box) => {
-          if (err) {
-            logMessage(this.currentNum, this.total, `Error opening inbox: ${err.message}`, "error");
-            imap.end();
-            reject(err);
-            return;
-          }
-
-          logMessage(this.currentNum, this.total, "Searching for verification email", "process");
-          // Search for recent emails with exact subject - increase time window to 15 minutes
-          const searchCriteria = [
-            ['SINCE', new Date(Date.now() - 1000 * 60 * 15)],
-            ['SUBJECT', 'ARI E-mail validation code']
-          ];
-
-          imap.search(searchCriteria, (err, results) => {
+      // Function to search a specific mailbox
+      const searchMailbox = async (boxName) => {
+        return new Promise((resolveBox) => {
+          imap.openBox(boxName, false, (err, box) => {
             if (err) {
-              logMessage(this.currentNum, this.total, `Search error: ${err.message}`, "error");
-              imap.end();
-              resolve(null);
+              logMessage(this.currentNum, this.total, `Error opening ${boxName}: ${err.message}`, "error");
+              resolveBox(null);
               return;
             }
 
-            if (!results.length) {
-              logMessage(this.currentNum, this.total, "No matching emails found", "warning");
-              imap.end();
-              resolve(null);
-              return;
-            }
+            logMessage(this.currentNum, this.total, `Searching in ${boxName}...`, "debug");
+            const searchCriteria = [
+              ['SINCE', new Date(Date.now() - 1000 * 60 * 15)],
+              ['SUBJECT', 'ARI E-mail validation code']
+            ];
 
-            logMessage(this.currentNum, this.total, `Found ${results.length} matching emails`, "success");
+            imap.search(searchCriteria, (err, results) => {
+              if (err || !results.length) {
+                resolveBox(null);
+                return;
+              }
 
-            const f = imap.fetch(results, { bodies: '' });
-            let verification_code = null;
+              logMessage(this.currentNum, this.total, `Found ${results.length} matches in ${boxName}`, "debug");
+              const f = imap.fetch(results, { bodies: '' });
+              let verification_code = null;
 
-            f.on('message', (msg) => {
-              msg.on('body', (stream) => {
-                let buffer = '';
-                stream.on('data', (chunk) => buffer += chunk.toString('utf8'));
-                stream.once('end', () => {
-                  logMessage(this.currentNum, this.total, "Processing email content", "process");
-                  
-                  // Try to find the code in the specific HTML structure first
-                  const htmlMatch = buffer.match(/<b[^>]*>(\d{6})<\/b>/);
-                  if (htmlMatch && htmlMatch[1] && !verification_code) { // Only set if not already found
-                    verification_code = htmlMatch[1];
-                    logMessage(this.currentNum, this.total, `Found first verification code in HTML: ${verification_code}`, "success");
-                  }
+              f.on('message', (msg) => {
+                msg.on('body', (stream) => {
+                  let buffer = '';
+                  stream.on('data', (chunk) => buffer += chunk.toString('utf8'));
+                  stream.once('end', () => {
+                    logMessage(this.currentNum, this.total, "Processing email content", "process");
+                    const htmlMatch = buffer.match(/<b[^>]*>(\d{6})<\/b>/);
+                    if (htmlMatch && htmlMatch[1] && !verification_code) {
+                      verification_code = htmlMatch[1];
+                      logMessage(this.currentNum, this.total, `Found verification code in ${boxName}: ${verification_code}`, "success");
+                    }
+                  });
                 });
               });
-            });
 
-            f.once('end', () => {
-              imap.end();
-              if (verification_code) {
-                logMessage(this.currentNum, this.total, `Using first verification code found: ${verification_code}`, "success");
-              }
-              resolve(verification_code);
+              f.once('end', () => resolveBox(verification_code));
             });
           });
         });
+      };
+
+      imap.once('ready', async () => {
+        // Search INBOX first, then Bulk if no code found
+        const inboxCode = await searchMailbox('INBOX');
+        if (inboxCode) {
+          imap.end();
+          resolve(inboxCode);
+          return;
+        }
+
+        logMessage(this.currentNum, this.total, "No code in INBOX, checking Bulk...", "debug");
+        const bulkCode = await searchMailbox('Bulk');
+        imap.end();
+        resolve(bulkCode);
       });
 
       imap.once('error', (err) => {
@@ -404,105 +400,83 @@ class ariChain {
 
       logMessage(this.currentNum, this.total, `Connecting to Zoho Mail: ${email}`, "process");
 
-      imap.once('ready', () => {
-        logMessage(this.currentNum, this.total, "Connected to Zoho Mail", "success");
-        
-        // List all mailboxes for debugging
-        imap.getBoxes((err, boxes) => {
-          if (err) {
-            logMessage(this.currentNum, this.total, `Error getting mailboxes: ${err.message}`, "error");
-          } else {
-            logMessage(this.currentNum, this.total, `Available mailboxes: ${Object.keys(boxes).join(', ')}`, "debug");
-          }
-        });
-        
-        imap.openBox('INBOX', false, (err, box) => {
-          if (err) {
-            logMessage(this.currentNum, this.total, `Error opening inbox: ${err.message}`, "error");
-            imap.end();
-            reject(err);
-            return;
-          }
-
-          logMessage(this.currentNum, this.total, `Mailbox status: ${JSON.stringify(box.flags)}`, "debug");
-          logMessage(this.currentNum, this.total, `Total messages: ${box.messages.total}`, "debug");
-          logMessage(this.currentNum, this.total, `New messages: ${box.messages.new}`, "debug");
-          logMessage(this.currentNum, this.total, `Unread messages: ${box.messages.unseen}`, "debug");
-
-          const subject = "ARI E-mail validation code";
-          const sender = "no-reply@arichain.com";
-          logMessage(this.currentNum, this.total, `Searching for subject: ${subject} or sender: ${sender}`, "debug");
-
-          // Try subject first
-          let searchCriteria = [
-            'UNSEEN',
-            ['SUBJECT', subject]
-          ];
-
-          const searchWithCriteria = async (criteria) => {
-            return new Promise((resolveSearch) => {
-              imap.search(criteria, (err, results) => {
-                if (err || !results.length) {
-                  resolveSearch(null);
-                  return;
-                }
-                resolveSearch(results);
-              });
-            });
-          };
-
-          // First try subject search, then fall back to sender search
-          searchWithCriteria(searchCriteria).then(async (results) => {
-            if (!results) {
-              logMessage(this.currentNum, this.total, "No results with subject search, trying sender...", "debug");
-              // Try searching by sender instead
-              searchCriteria = [
-                'UNSEEN',
-                ['FROM', sender]
-              ];
-              results = await searchWithCriteria(searchCriteria);
-            }
-
-            if (!results) {
-              logMessage(this.currentNum, this.total, "No matching emails found with either criteria", "warning");
-              imap.end();
-              resolve(null);
+      // Function to search a specific mailbox
+      const searchMailbox = async (boxName) => {
+        return new Promise((resolveBox) => {
+          imap.openBox(boxName, false, (err, box) => {
+            if (err) {
+              logMessage(this.currentNum, this.total, `Error opening ${boxName}: ${err.message}`, "error");
+              resolveBox(null);
               return;
             }
 
-            logMessage(this.currentNum, this.total, `Found ${results.length} matching emails`, "success");
+            logMessage(this.currentNum, this.total, `Searching in ${boxName}...`, "debug");
+            const searchCriteria = [
+              'UNSEEN',
+              ['SUBJECT', 'ARI E-mail validation code']
+            ];
 
-            const f = imap.fetch(results, { bodies: '' });
-            let verification_code = null;
+            imap.search(searchCriteria, (err, results) => {
+              if (err || !results.length) {
+                resolveBox(null);
+                return;
+              }
 
-            f.on('message', (msg) => {
-              msg.on('body', (stream) => {
-                let buffer = '';
-                stream.on('data', (chunk) => buffer += chunk.toString('utf8'));
-                stream.once('end', () => {
-                  logMessage(this.currentNum, this.total, "Processing email content", "process");
-                  
-                  // Try to find the code in the specific HTML structure first
-                  const htmlMatch = buffer.match(/<b[^>]*>(\d{6})<\/b>/);
-                  if (htmlMatch && htmlMatch[1] && !verification_code) { // Only set if not already found
-                    verification_code = htmlMatch[1];
-                    logMessage(this.currentNum, this.total, `Found first verification code in HTML: ${verification_code}`, "success");
-                  }
+              logMessage(this.currentNum, this.total, `Found ${results.length} matches in ${boxName}`, "debug");
+              const f = imap.fetch(results, { bodies: '' });
+              let verification_code = null;
+
+              f.on('message', (msg) => {
+                msg.on('body', (stream) => {
+                  let buffer = '';
+                  stream.on('data', (chunk) => buffer += chunk.toString('utf8'));
+                  stream.once('end', () => {
+                    logMessage(this.currentNum, this.total, "Processing email content", "process");
+
+                    // Use the specific HTML pattern provided
+                    const specificPattern = /!important">(\d{6})<\/b>/i;
+                    const match = buffer.match(specificPattern);
+                    
+                    if (match && match[1]) {
+                      const code = match[1];
+                      if (/^\d{6}$/.test(code) && code !== '000000') {
+                        verification_code = code;
+                        logMessage(this.currentNum, this.total, `Found verification code in exact HTML structure: ${verification_code}`, "success");
+                      }
+                    }
+
+                    if (!verification_code) {
+                      logMessage(this.currentNum, this.total, "No valid verification code found in email", "warning");
+                    }
+
+                    resolveBox(verification_code);
+                  });
                 });
               });
-            });
 
-            f.once('end', () => {
-              imap.end();
-              resolve(verification_code);
+              f.once('end', () => resolveBox(verification_code));
             });
           });
         });
+      };
+
+      imap.once('ready', async () => {
+        // Search INBOX first, then Spam if no code found
+        const inboxCode = await searchMailbox('INBOX');
+        if (inboxCode) {
+          imap.end();
+          resolve(inboxCode);
+          return;
+        }
+
+        logMessage(this.currentNum, this.total, "No code in INBOX, checking Spam...", "debug");
+        const spamCode = await searchMailbox('Spam');
+        imap.end();
+        resolve(spamCode);
       });
 
       imap.once('error', (err) => {
-        logMessage(this.currentNum, this.total, `Zoho IMAP error: ${err.message}`, "error");
-        logMessage(this.currentNum, this.total, `Error stack: ${err.stack}`, "debug");
+        logMessage(this.currentNum, this.total, `IMAP error: ${err.message}`, "error");
         imap.end();
         reject(err);
       });
@@ -514,7 +488,7 @@ class ariChain {
   async getCodeVerification(email, password) {
     logMessage(this.currentNum, this.total, "Waiting for code verification...", "process");
 
-    const maxAttempts = 20; // Increased from 5 to 8 attempts
+    const maxAttempts = 12; // Increased from 5 to 8 attempts
     const waitTime = 15000; // Increased from 10 to 15 seconds
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
