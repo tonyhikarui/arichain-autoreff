@@ -584,6 +584,59 @@ class ariChain {
     return response.data;
   }
 
+  async getQuiz(address) {
+    const headers = {
+      accept: "*/*",
+      "content-type": "application/x-www-form-urlencoded",
+    };
+    const data = qs.stringify({ address });
+    const response = await this.makeRequest(
+      "POST",
+      "https://arichain.io/api/event/quiz_q",
+      {
+        headers,
+        data,
+      }
+    );
+    if (!response) {
+      logMessage(this.currentNum, this.total, "Failed checkin", "error");
+      return null;
+    }
+    return response.data;
+  }
+
+  async setQuiz(address, quiz_idx, answer_idx) {
+    const headers = {
+      accept: "*/*",
+      "content-type": "application/x-www-form-urlencoded",
+    };
+    const transferData = qs.stringify({
+      address: address,
+      quiz_idx: quiz_idx,
+      answer_idx: answer_idx
+    });
+    
+    console.log(`setQuiz payload: ${transferData}`);
+    
+    const response = await this.makeRequest(
+      "POST",
+      "https://arichain.io/api/event/quiz_a",
+      {
+        headers,
+        data: transferData,
+      }
+    );
+    
+    if (!response) {
+      logMessage(this.currentNum, this.total, "Failed to set quiz", "error");
+      return null;
+    }
+    
+    //console.log('setQuiz response:', response.data);
+    
+    return response.data;
+  }
+
   async transferToken(email, toAddress, password, amount = 60) {
     const headers = {
       accept: "*/*",
