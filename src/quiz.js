@@ -104,8 +104,8 @@ async function main() {
                     throw new Error("Failed to getQuizResult");
                 }
 
-                const quizIdx = 122;
-                const answerIdx = 406;
+                const quizIdx = 136;
+                const answerIdx = 459;
                 //console.log(`Setting quiz with payload: { address: ${address}, quiz_idx: ${quizIdx}, answer_idx: ${answerIdx} }`);
                 const setQuizResult = await generator.setQuiz(address, quizIdx, answerIdx);
                 console.log('setQuizResult response:', setQuizResult);
@@ -117,7 +117,7 @@ async function main() {
                 logMessage(i + 1, count, `setQuizResult Daily Done`, "success");
                 await new Promise(resolve => setTimeout(resolve, 1000));
 
-
+/*
                 console.log('Attempting token transfer...');
                 const transferResult = await generator.transferToken(
                     email,
@@ -131,7 +131,7 @@ async function main() {
                     throw new Error("Failed to transfer token");
                 }
                 logMessage(i + 1, count, `Transfer Token Done`, "success");
-                
+*/
             } catch (error) {
                 console.error('Error details:', error);
                 logMessage(i + 1, count, `Error: ${error.message}`, "error");

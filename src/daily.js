@@ -83,7 +83,7 @@ async function main() {
                 if (!checkinResult) {
                     throw new Error("Failed to checkin");
                 }
-
+/*
                 console.log('Attempting token transfer...');
                 const transferResult = await generator.transferToken(
                     email,
@@ -97,6 +97,7 @@ async function main() {
                     throw new Error("Failed to transfer token");
                 }
                 logMessage(i + 1, count, `Transfer Token Done`, "success");
+*/
             } catch (error) {
                 console.error('Error details:', error);
                 logMessage(i + 1, count, `Error: ${error.message}`, "error");
