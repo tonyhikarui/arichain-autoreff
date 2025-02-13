@@ -1,60 +1,40 @@
 const axios = require("axios");
 const { Solver } = require("@2captcha/captcha-solver");
-const { google } = require("googleapis");
+const ac = require("@antiadmin/anticaptchaofficial");
+const { simpleParser } = require("mailparser");
 const { logMessage } = require("../utils/logger");
 const { getProxyAgent } = require("./proxy");
+const { authorize } = require("./authGmail");
 const fs = require("fs");
 const { EmailGenerator } = require("../utils/generator");
 const path = require("path");
-const TOKEN_PATH = path.join(__dirname, "../json/token.json");
-const confEmail = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, "../json/client_secret.json"))
-).email;
-const confApi = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, "../json/client_secret.json"))
-).geminiApi;
-const gemeiniPrompt = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, "../json/client_secret.json"))
-).prompt;
-const captchaApi = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, "../json/client_secret.json"))
-).captha2Apikey;
+const configPath = path.resolve(__dirname, "../json/config.json");
+const config = JSON.parse(fs.readFileSync(configPath));
+const confEmail = config.email;
+const confApi = config.geminiApi;
+const gemeiniPrompt = config.prompt;
+const captchaApi = config.captha2Apikey;
+const apiCaptcha = config.apiCaptchakey;
+ac.setAPIKey(apiCaptcha);
 const qs = require("qs");
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
-function loadOAuth2Client() {
-  const credentials = JSON.parse(
-    fs.readFileSync(path.resolve(__dirname, "../json/client_secret.json"))
-  );
-  const { client_id, client_secret, redirect_uris } = credentials.installed;
-  const oAuth2Client = new google.auth.OAuth2(
-    client_id,
-    client_secret,
-    redirect_uris[0]
-  );
-  const token = JSON.parse(fs.readFileSync(TOKEN_PATH));
-  oAuth2Client.setCredentials(token);
-  return oAuth2Client;
-}
-
 class ariChain {
-  constructor(refCode, proxy = null) {
+  constructor(refCode, proxy = null, currentNum, total) {
     this.refCode = refCode;
     this.proxy = proxy;
     this.axiosConfig = {
       ...(this.proxy && { httpsAgent: getProxyAgent(this.proxy) }),
       timeout: 60000,
     };
-    this.gmailClient = google.gmail({
-      version: "v1",
-      auth: loadOAuth2Client(),
-    });
     this.baseEmail = confEmail;
     this.gemini = new GoogleGenerativeAI(confApi);
     this.model = this.gemini.getGenerativeModel({
       model: "gemini-1.5-flash",
     });
     this.twoCaptchaSolver = new Solver(captchaApi);
+    this.currentNum = currentNum;
+    this.total = total;
   }
 
   async makeRequest(method, url, config = {}) {
@@ -73,14 +53,6 @@ class ariChain {
         `Request failed: ${error.message}`,
         "error"
       );
-      if (this.proxy) {
-        logMessage(
-          this.currentNum,
-          this.total,
-          `Failed proxy: ${this.proxy}`,
-          "error"
-        );
-      }
       return null;
     }
   }
@@ -143,19 +115,17 @@ class ariChain {
       const captchaText = result.response.text().trim();
       const cleanedCaptchaText = captchaText.replace(/\s/g, "");
 
-      logMessage(
-        this.currentNum,
-        this.total,
-        "Solve captcha done...",
-        "success"
-      );
       return cleanedCaptchaText;
     } catch (error) {
-      console.error("Error solving CAPTCHA with Gemini:", error);
+      if (error.message.includes("quota") || error.message.includes("limit")) {
+        throw new Error(
+          "Your gemini API key has reached the limit. Please wait for the quota to reset."
+        );
+      }
+
       return null;
     }
   }
-
   async solveCaptchaWith2Captcha(imageBuffer) {
     try {
       const base64Image = Buffer.from(imageBuffer).toString("base64");
@@ -171,7 +141,18 @@ class ariChain {
     }
   }
 
-  async sendEmailCode(email, use2Captcha = false) {
+  async solveCaptchaWithAntiCaptcha(imageBuffer) {
+    try {
+      const base64Image = Buffer.from(imageBuffer).toString("base64");
+      const captchaText = await ac.solveImage(base64Image, true);
+      return captchaText;
+    } catch (error) {
+      console.error("Error solving CAPTCHA with Anti-Captcha:", error);
+      return null;
+    }
+  }
+
+  async sendEmailCode(email, use2Captcha = false, useAntiCaptcha = false) {
     logMessage(
       this.currentNum,
       this.total,
@@ -190,7 +171,7 @@ class ariChain {
       logMessage(
         this.currentNum,
         this.total,
-        `Attempt ${attempts} to solve CAPTCHA...`,
+        `Attempt ${attempts} to solve captcha...`,
         "process"
       );
 
@@ -203,7 +184,7 @@ class ariChain {
         logMessage(
           this.currentNum,
           this.total,
-          "Failed to get CAPTCHA",
+          "Failed to get captcha",
           "error"
         );
         continue;
@@ -216,7 +197,7 @@ class ariChain {
         logMessage(
           this.currentNum,
           this.total,
-          "Failed to get CAPTCHA image",
+          "Failed to get captcha iamge",
           "error"
         );
         continue;
@@ -224,6 +205,10 @@ class ariChain {
 
       if (use2Captcha) {
         captchaText = await this.solveCaptchaWith2Captcha(captchaImageBuffer);
+      } else if (useAntiCaptcha) {
+        captchaText = await this.solveCaptchaWithAntiCaptcha(
+          captchaImageBuffer
+        );
       } else {
         captchaText = await this.solveCaptchaWithGemini(captchaImageBuffer);
       }
@@ -232,7 +217,7 @@ class ariChain {
         logMessage(
           this.currentNum,
           this.total,
-          "Failed to solve CAPTCHA",
+          "Failed to solve captcha",
           "error"
         );
         continue;
@@ -270,8 +255,8 @@ class ariChain {
           logMessage(
             this.currentNum,
             this.total,
-            "CAPTCHA is not valid, retrying...",
-            "warning"
+            "Captcha is not valid, retrying...",
+            "error"
           );
           continue;
         } else {
@@ -279,6 +264,13 @@ class ariChain {
           return false;
         }
       }
+
+      logMessage(
+        this.currentNum,
+        this.total,
+        "Solve captcha done...",
+        "success"
+      );
 
       logMessage(
         this.currentNum,
@@ -305,7 +297,7 @@ class ariChain {
       "Waiting for code verification...",
       "process"
     );
-
+    const client = await authorize();
     const maxAttempts = 5;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       logMessage(
@@ -319,48 +311,58 @@ class ariChain {
         this.currentNum,
         this.total,
         "Waiting for 10sec...",
-        "warning"
+        "process"
       );
       await new Promise((resolve) => setTimeout(resolve, 10000));
 
-      const messages = await this.gmailClient.users.messages.list({
-        userId: "me",
-        q: `to:${tempEmail}`,
-      });
+      try {
+        const lock = await client.getMailboxLock("INBOX");
+        try {
+          const messages = await client.fetch("1:*", {
+            envelope: true,
+            source: true,
+          });
 
-      if (messages.data.messages && messages.data.messages.length > 0) {
-        const messageId = messages.data.messages[0].id;
-        const message = await this.gmailClient.users.messages.get({
-          userId: "me",
-          id: messageId,
-          format: "full",
-        });
-
-        const emailBody = message.data.payload.body.data;
-        if (emailBody) {
-          const decodedBody = Buffer.from(emailBody, "base64").toString(
-            "utf-8"
-          );
-
-          const codeMatch = decodedBody.match(/\b\d{6}\b/);
-          if (codeMatch) {
-            const verificationCode = codeMatch[0];
-            logMessage(
-              this.currentNum,
-              this.total,
-              `Verificatin code found: ${verificationCode}`,
-              "success"
-            );
-            return verificationCode;
+          for await (const message of messages) {
+            if (
+              message.envelope.to &&
+              message.envelope.to.some((to) => to.address === tempEmail)
+            ) {
+              const emailSource = message.source.toString();
+              const parsedEmail = await simpleParser(emailSource);
+              const verificationCode = this.extractVerificationCode(
+                parsedEmail.html
+              );
+              if (verificationCode) {
+                logMessage(
+                  this.currentNum,
+                  this.total,
+                  `Verification code found: ${verificationCode}`,
+                  "success"
+                );
+                return verificationCode;
+              } else {
+                logMessage(
+                  this.currentNum,
+                  this.total,
+                  "No verification code found in the email body.",
+                  "error"
+                );
+              }
+            }
           }
+        } finally {
+          lock.release();
         }
+      } catch (error) {
+        console.error("Error fetching emails:", error);
       }
 
       logMessage(
         this.currentNum,
         this.total,
         "Verification code not found. Waiting for 5 sec...",
-        "warning"
+        "error"
       );
       await new Promise((resolve) => setTimeout(resolve, 5000));
     }
@@ -371,6 +373,16 @@ class ariChain {
       "Error get code verification.",
       "error"
     );
+    return null;
+  }
+
+  extractVerificationCode(html) {
+    if (!html) return null;
+    const codeMatch = html.match(/\b\d{6}\b/);
+    if (codeMatch) {
+      return codeMatch[0];
+    }
+
     return null;
   }
 
@@ -388,8 +400,8 @@ class ariChain {
         data,
       }
     );
-    if (!response) {
-      logMessage(this.currentNum, this.total, "Failed checkin", "error");
+    if (response.data.status === "fail") {
+      logMessage(this.currentNum, this.total, response.data.msg, "error");
       return null;
     }
     return response.data;
@@ -414,10 +426,12 @@ class ariChain {
         data: transferData,
       }
     );
-    if (!response) {
-      logMessage(this.currentNum, this.total, "Failed send token", "error");
+
+    if (response.data.status === "fail") {
+      logMessage(this.currentNum, this.total, response.data.msg, "error");
       return null;
     }
+
     return response.data;
   }
 
@@ -462,7 +476,7 @@ class ariChain {
       return null;
     }
 
-    logMessage(this.currentNum, this.total, "Register succes.", "success");
+    logMessage(this.currentNum, this.total, "Register succesfully.", "success");
 
     return response.data;
   }
