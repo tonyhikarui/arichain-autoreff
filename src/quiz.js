@@ -104,8 +104,8 @@ async function main() {
                     throw new Error("Failed to getQuizResult");
                 }
 
-                const quizIdx = 136;
-                const answerIdx = 459;
+                const quizIdx = 141;
+                const answerIdx = 480;
                 //console.log(`Setting quiz with payload: { address: ${address}, quiz_idx: ${quizIdx}, answer_idx: ${answerIdx} }`);
                 const setQuizResult = await generator.setQuiz(address, quizIdx, answerIdx);
                 console.log('setQuizResult response:', setQuizResult);
